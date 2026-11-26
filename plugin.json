@@ -2,10 +2,14 @@
   "name": "Glance Library",
   "author": "GameGlance Community",
   "flags": [],
-  "version": "1.1.2.1",
+  "version": "1.1.3.0",
   "api_version": 1,
   "publish": {
-    "tags": ["library", "theme", "tabmaster"],
+    "tags": [
+      "library",
+      "theme",
+      "tabmaster"
+    ],
     "description": "Pegasus-inspired Spotlight Library for Steam Game Mode with customizable grid density, collection views, and TabMaster sync.",
     "image": ""
   }
