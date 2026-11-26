@@ -1505,6 +1505,7 @@ const DEFAULTS = {
     spotlightLibrary: true,
     libraryGridColumns: 3,
     libraryCollectionColumns: 5,
+    librarySoundtrackColumns: 4,
     gameLogo: false,
     dimUninstalledGames: false,
     tabMasterSync: true,
@@ -1517,6 +1518,7 @@ const DEFAULTS = {
     collectionArtFit: 'cover',
     collectionCustomArt: {},
     librarySort: 'recent',
+    librarySortDir: 'up',
     customTabsEnabled: false,
     customTabs: [],
     topTabBar: true,
@@ -1533,6 +1535,9 @@ function parseSettings(raw) {
         libraryCollectionColumns: typeof raw?.libraryCollectionColumns === 'number' && raw.libraryCollectionColumns >= 2 && raw.libraryCollectionColumns <= 8
             ? raw.libraryCollectionColumns
             : DEFAULTS.libraryCollectionColumns,
+        librarySoundtrackColumns: typeof raw?.librarySoundtrackColumns === 'number' && raw.librarySoundtrackColumns >= 3 && raw.librarySoundtrackColumns <= 8
+            ? raw.librarySoundtrackColumns
+            : DEFAULTS.librarySoundtrackColumns,
         gameLogo: pick('gameLogo'),
         dimUninstalledGames: pick('dimUninstalledGames'),
         tabMasterSync: pick('tabMasterSync'),
@@ -1550,9 +1555,10 @@ function parseSettings(raw) {
         collectionCustomArt: typeof raw?.collectionCustomArt === 'object' && raw?.collectionCustomArt !== null && !Array.isArray(raw?.collectionCustomArt)
             ? raw.collectionCustomArt
             : DEFAULTS.collectionCustomArt,
-        librarySort: raw?.librarySort === 'alpha' || raw?.librarySort === 'playtime' || raw?.librarySort === 'size' || raw?.librarySort === 'recent'
+        librarySort: raw?.librarySort === 'alpha' || raw?.librarySort === 'playtime' || raw?.librarySort === 'size' || raw?.librarySort === 'recent' || raw?.librarySort === 'added'
             ? raw.librarySort
             : DEFAULTS.librarySort,
+        librarySortDir: raw?.librarySortDir === 'down' ? 'down' : 'up',
         customTabsEnabled: pick('customTabsEnabled'),
         topTabBar: pick('topTabBar'),
         topAvatarRadius: typeof raw?.topAvatarRadius === 'number' && raw.topAvatarRadius >= 0 && raw.topAvatarRadius <= 16
@@ -1700,6 +1706,9 @@ function createSettingsStore(kv, storage = defaultStorage) {
         async setLibraryGridColumns(libraryGridColumns) {
             await persist({ ...current, libraryGridColumns });
         },
+        async setLibrarySoundtrackColumns(librarySoundtrackColumns) {
+            await persist({ ...current, librarySoundtrackColumns });
+        },
         async setLibraryCollectionColumns(libraryCollectionColumns) {
             await persist({ ...current, libraryCollectionColumns });
         },
@@ -1768,6 +1777,12 @@ function createSettingsStore(kv, storage = defaultStorage) {
                     delete nextMap[k];
             }
             await persist({ ...current, collectionCustomArt: nextMap });
+        },
+        async setLibrarySortDir(librarySortDir) {
+            await persist({ ...current, librarySortDir: librarySortDir === 'down' ? 'down' : 'up' });
+        },
+        async setLibrarySortAndDir(librarySort, librarySortDir) {
+            await persist({ ...current, librarySort, librarySortDir: librarySortDir === 'down' ? 'down' : 'up' });
         },
         async setLibrarySort(librarySort) {
             await persist({ ...current, librarySort });
@@ -2411,13 +2426,26 @@ const browserStores = {
         const store = globals().appStore;
         const overview = getOverviewWithFallback(id);
         const steamUrls = [];
+        if (overview && store) {
+            const rel = (u) => (typeof u === 'string' && u ? (/^(https?:|data:|\/)/i.test(u) ? u : `/${u}`) : null);
+            for (const read of [() => store.GetCachedAlbumCoverURL?.(overview), () => store.GetAlbumCoverURLForApp?.(overview)]) {
+                try {
+                    const url = rel(read());
+                    if (url)
+                        steamUrls.push(url);
+                }
+                catch {
+                    // not available on this Steam version
+                }
+            }
+        }
         if (overview) {
             const customPath = overview.strCustomCapsulePath ?? overview.m_strCustomCapsulePath;
             if (typeof customPath === 'string' && customPath)
                 steamUrls.push(customPath);
         }
         if (store || globals().appDetailsStore) {
-            steamUrls.push(`/customimages/${id}p.jpg`, `/customimages/${id}p.png`, `/customimages/${id}.jpg`, `/customimages/${id}.png`);
+            steamUrls.push(`/customimages/${id}p.jpg`, `/customimages/${id}p.png`);
         }
         return steamUrls.length > 0 ? steamUrls : undefined;
     },
@@ -2510,12 +2538,12 @@ function UpdatesSection() {
                     }, children: ["Update to ", state.release.version] }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: state.status === 'checking', onClick: recheck, children: "Check for updates" }) })] }));
 }
 function SettingsPanel() {
-    const { enabled, spotlightLibrary, libraryGridColumns, libraryCollectionColumns, dimUninstalledGames, tabMasterSync, customTabsEnabled, topTabBar, topAvatarRadius, libraryStatusBar, statusAvatar, collectionConsoleIcons, collectionArtMode, collectionArtFit, librarySort, } = useSettings();
+    const { enabled, spotlightLibrary, libraryGridColumns, libraryCollectionColumns, librarySoundtrackColumns, dimUninstalledGames, tabMasterSync, customTabsEnabled, topTabBar, topAvatarRadius, libraryStatusBar, statusAvatar, collectionConsoleIcons, collectionArtMode, collectionArtFit, librarySort, librarySortDir, } = useSettings();
     const isLibraryActive = enabled && spotlightLibrary;
     return (SP_JSX.jsxs("div", { children: [SP_JSX.jsx(DFL.PanelSection, { title: PLUGIN_NAME, children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Spotlight Library", description: "Replaces Steam's Library with the Spotlight Library 2-panel view. Turn off to return to Steam's native Library.", checked: isLibraryActive, onChange: (value) => {
                             void settings.setEnabled(value);
                             void settings.setSpotlightLibrary(value);
-                        } }) }) }), isLibraryActive && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "Layout & Grid Density", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: "Game Columns", description: "Number of poster columns in games views (3 to 7).", value: libraryGridColumns, min: 3, max: 7, step: 1, notchCount: 5, notchLabels: [
+                        } }) }) }), isLibraryActive && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "Layout & Grid Density", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: "Game Columns", description: "Number of columns in games views (3 to 7). Soundtracks have their own setting below.", value: libraryGridColumns, min: 3, max: 7, step: 1, notchCount: 5, notchLabels: [
                                         { notchIndex: 0, label: '3', value: 3 },
                                         { notchIndex: 1, label: '4', value: 4 },
                                         { notchIndex: 2, label: '5', value: 5 },
@@ -2524,7 +2552,14 @@ function SettingsPanel() {
                                     ], onChange: (value) => {
                                         const cols = value < 3 ? value + 3 : value;
                                         void settings.setLibraryGridColumns(cols);
-                                    } }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: "Collection Columns", description: "Number of columns in collections view (3 to 8).", value: libraryCollectionColumns, min: 3, max: 8, step: 1, notchCount: 6, notchLabels: [
+                                    } }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: "Soundtrack Columns", description: "Number of square album columns in the Soundtracks tab (3 to 8).", value: librarySoundtrackColumns, min: 3, max: 8, step: 1, notchCount: 6, notchLabels: [
+                                        { notchIndex: 0, label: '3', value: 3 },
+                                        { notchIndex: 1, label: '4', value: 4 },
+                                        { notchIndex: 2, label: '5', value: 5 },
+                                        { notchIndex: 3, label: '6', value: 6 },
+                                        { notchIndex: 4, label: '7', value: 7 },
+                                        { notchIndex: 5, label: '8', value: 8 },
+                                    ], onChange: (value) => void settings.setLibrarySoundtrackColumns(Math.min(8, Math.max(3, value))) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: "Collection Columns", description: "Number of columns in collections view (3 to 8).", value: libraryCollectionColumns, min: 3, max: 8, step: 1, notchCount: 6, notchLabels: [
                                         { notchIndex: 0, label: '3', value: 3 },
                                         { notchIndex: 1, label: '4', value: 4 },
                                         { notchIndex: 2, label: '5', value: 5 },
@@ -2534,12 +2569,16 @@ function SettingsPanel() {
                                     ], onChange: (value) => {
                                         const cols = value < 3 ? value + 3 : value;
                                         void settings.setLibraryCollectionColumns(cols);
-                                    } }) })] }), SP_JSX.jsx(DFL.PanelSection, { title: "Library Browsing & Sorting", children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.DropdownItem, { label: "Default sorting order", description: "How games and collections are ordered in the library.", rgOptions: [
+                                    } }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Library Browsing & Sorting", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.DropdownItem, { label: "Default sorting order", description: "How games and collections are ordered in the library.", rgOptions: [
                                     { data: 'recent', label: 'Last Played (Recent)' },
                                     { data: 'alpha', label: 'Alphabetical (A–Z)' },
                                     { data: 'playtime', label: 'Hours Played' },
                                     { data: 'size', label: 'Size on Disk' },
-                                ], selectedOption: librarySort, onChange: (val) => settings.setLibrarySort(val.data) }) }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Library Tabs", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Add, remove, rename, hide and reorder library tabs, including tabs for your Steam collections.", onClick: () => {
+                                    { data: 'added', label: 'Date Added to Library' },
+                                ], selectedOption: librarySort, onChange: (val) => settings.setLibrarySort(val.data) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.DropdownItem, { label: "Sort direction", description: `Up: ${SORT_DIR_HINTS[librarySort]?.up ?? 'usual order'}. Down: ${SORT_DIR_HINTS[librarySort]?.down ?? 'reversed'}.`, rgOptions: [
+                                    { data: 'up', label: '↑ Up' },
+                                    { data: 'down', label: '↓ Down' },
+                                ], selectedOption: librarySortDir, onChange: (val) => settings.setLibrarySortDir(val.data) }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Library Tabs", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Add, remove, rename, hide and reorder library tabs, including tabs for your Steam collections.", onClick: () => {
                                         try {
                                             DFL.Navigation.CloseSideMenus?.();
                                         }
@@ -2561,7 +2600,7 @@ function SettingsPanel() {
                                         { data: 'contain', label: 'Contain (Fit whole image)' },
                                         { data: 'fill', label: 'Stretch to fill' },
                                         { data: 'center', label: 'Centered (Default icon badge)' },
-                                    ], selectedOption: collectionArtFit, onChange: (val) => settings.setCollectionArtFit(val.data) }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Status Bar", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Tabs at the top of the screen", description: "Moves the tab bar up into Steam's top bar, with search, Wi-Fi, battery, the clock and your profile built in. Tabs scroll sideways when there are many. Press Up from the tabs to use Steam's own top bar.", checked: topTabBar, onChange: (value) => settings.setTopTabBar(value) }) }), topTabBar && SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: "Profile picture roundness", description: `Corner roundness of your profile picture in the top bar: ${topAvatarRadius}px (0 = square, 16 = nearly round).`, value: topAvatarRadius, min: 0, max: 16, step: 1, showValue: true, onChange: (value) => settings.setTopAvatarRadius(value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Status bar", description: "Recycles the sleek glass status bar with clock, battery level, and connection status at the top right of the library.", checked: libraryStatusBar, onChange: (value) => settings.setLibraryStatusBar(value) }) }), libraryStatusBar && !topTabBar && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Profile picture", description: "Displays your Steam avatar ringed in your online status colour in the status bar instead of the dot.", checked: statusAvatar, onChange: (value) => settings.setStatusAvatar(value) }) }))] }), SP_JSX.jsx(DFL.PanelSection, { title: "Visuals & Effects", children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Unhighlight uninstalled games", description: "Applies neutral gray accents and grayscale tones to games in the library grid that are not installed on this device.", checked: dimUninstalledGames, onChange: (value) => settings.setDimUninstalledGames(value) }) }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Artwork & Cache", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Forces Steam covers and collection artwork to re-fetch and refresh in the library.", onClick: () => {
+                                    ], selectedOption: collectionArtFit, onChange: (val) => settings.setCollectionArtFit(val.data) }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Status Bar", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Tabs at the top of the screen", description: "Moves the tab bar up into Steam's top bar, with Wi-Fi, battery, the clock and your profile built in. Tabs scroll sideways when there are many. Press Up from the tabs to use Steam's own top bar.", checked: topTabBar, onChange: (value) => settings.setTopTabBar(value) }) }), topTabBar && SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.SliderField, { label: "Profile picture roundness", description: `Corner roundness of your profile picture in the top bar: ${topAvatarRadius}px (0 = square, 16 = nearly round).`, value: topAvatarRadius, min: 0, max: 16, step: 1, showValue: true, onChange: (value) => settings.setTopAvatarRadius(value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Status bar", description: "Recycles the sleek glass status bar with clock, battery level, and connection status at the top right of the library.", checked: libraryStatusBar, onChange: (value) => settings.setLibraryStatusBar(value) }) }), libraryStatusBar && !topTabBar && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Profile picture", description: "Displays your Steam avatar ringed in your online status colour in the status bar instead of the dot.", checked: statusAvatar, onChange: (value) => settings.setStatusAvatar(value) }) }))] }), SP_JSX.jsx(DFL.PanelSection, { title: "Visuals & Effects", children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Unhighlight uninstalled games", description: "Applies neutral gray accents and grayscale tones to games in the library grid that are not installed on this device.", checked: dimUninstalledGames, onChange: (value) => settings.setDimUninstalledGames(value) }) }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Artwork & Cache", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Forces Steam covers and collection artwork to re-fetch and refresh in the library.", onClick: () => {
                                         reloadArtworkCache();
                                         toaster.toast({ title: PLUGIN_NAME, body: 'Artwork reloaded.' });
                                     }, children: "Reload Steam artwork" }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Clears all cached HowLongToBeat times, descriptions, accent colors, and reloads artwork.", onClick: async () => {
@@ -4259,19 +4298,39 @@ function LibraryBackground({ candidates, heroUrl, fallbackUrl }) {
                 } })), SP_JSX.jsx("div", { className: "sgl-bg-vignette" })] }));
 }
 
-const SORT_MODES = ['recent', 'alpha', 'playtime', 'size'];
+const SORT_MODES = ['recent', 'alpha', 'playtime', 'size', 'added'];
 const SORT_LABELS = {
     recent: 'Recent',
     alpha: 'A–Z',
     playtime: 'Playtime',
     size: 'Size on Disk',
+    added: 'Date Added',
 };
 const SORT_ICONS = {
     recent: '🕒',
     alpha: '🔤',
     playtime: '⏳',
     size: '💾',
+    added: '📅',
 };
+/** What "up" and "down" mean for each mode (shown in the button tooltip). */
+const SORT_DIR_HINTS = {
+    recent: { up: 'just played first', down: 'longest since played first' },
+    alpha: { up: 'A to Z', down: 'Z to A' },
+    playtime: { up: 'most played first', down: 'least played first' },
+    size: { up: 'largest first', down: 'smallest first' },
+    added: { up: 'newest first', down: 'oldest first' },
+};
+const sortArrow = (dir) => (dir === 'down' ? '↓' : '↑');
+/** Each mode is visited twice: up, then down, then the next mode. */
+function getNextSort(mode, dir) {
+    const idx = SORT_MODES.indexOf(mode);
+    if (idx < 0)
+        return { mode: 'recent', dir: 'up' };
+    if (dir !== 'down')
+        return { mode, dir: 'down' };
+    return { mode: SORT_MODES[(idx + 1) % SORT_MODES.length], dir: 'up' };
+}
 function getNextSortMode(current) {
     const idx = SORT_MODES.indexOf(current);
     if (idx < 0)
@@ -4289,11 +4348,36 @@ function getGameSortName(game) {
         return sort;
     return (game.name || '').trim();
 }
-function sortGames(games, mode) {
+const dateAddedOf = (g) => (typeof g?.dateAdded === 'number' && g.dateAdded > 0 ? g.dateAdded : 0);
+function sortGames(games, mode, dir = 'up') {
+    const sorted = sortGamesUp(games, mode);
+    if (dir !== 'down' || sorted.length <= 1)
+        return sorted;
+    if (mode === 'added') {
+        // Unknown dates stay at the end in both directions.
+        const known = sorted.filter((g) => dateAddedOf(g) > 0).reverse();
+        return [...known, ...sorted.filter((g) => dateAddedOf(g) === 0)];
+    }
+    return [...sorted].reverse();
+}
+function sortGamesUp(games, mode) {
     if (!games || games.length <= 1)
         return games ?? [];
     const list = [...games];
     switch (mode) {
+        case 'added':
+            return list.sort((a, b) => {
+                const addA = dateAddedOf(a);
+                const addB = dateAddedOf(b);
+                if (addA === 0 || addB === 0) {
+                    if (addA !== addB)
+                        return addA === 0 ? 1 : -1; // unknown dates last
+                }
+                else if (addB !== addA) {
+                    return addB - addA; // newest first
+                }
+                return getGameSortName(a).localeCompare(getGameSortName(b), undefined, { sensitivity: 'base', numeric: true });
+            });
         case 'alpha':
             return list.sort((a, b) => {
                 const nameA = getGameSortName(a);
@@ -4327,11 +4411,23 @@ function sortGames(games, mode) {
             });
     }
 }
-function sortCollections(collections, mode) {
+function sortCollections(collections, mode, dir = 'up') {
+    const sorted = sortCollectionsUp(collections, mode);
+    return dir === 'down' && sorted.length > 1 ? [...sorted].reverse() : sorted;
+}
+function sortCollectionsUp(collections, mode) {
     if (!collections || collections.length <= 1)
         return collections ?? [];
     const list = [...collections];
     switch (mode) {
+        case 'added':
+            return list.sort((a, b) => {
+                const maxA = a.games?.reduce((max, g) => Math.max(max, dateAddedOf(g)), 0) ?? 0;
+                const maxB = b.games?.reduce((max, g) => Math.max(max, dateAddedOf(g)), 0) ?? 0;
+                if (maxB !== maxA)
+                    return maxB - maxA;
+                return (a.name || '').trim().localeCompare((b.name || '').trim(), undefined, { sensitivity: 'base', numeric: true });
+            });
         case 'alpha':
             return list.sort((a, b) => {
                 const nameA = (a.name || '').trim();
@@ -4366,7 +4462,7 @@ function sortCollections(collections, mode) {
     }
 }
 
-function LibraryCategoryBar({ categories, activeCategoryId, onSelectCategory, focusedIndex = 0, isHeaderFocused = false, isInsideSubCollection = false, collections, activeSubCollectionId = null, onSelectSubCollection, activeSubCollectionName = null, onBackToCollections, sortMode = 'recent', onCycleSort, }) {
+function LibraryCategoryBar({ categories, activeCategoryId, onSelectCategory, focusedIndex = 0, isHeaderFocused = false, isInsideSubCollection = false, collections, activeSubCollectionId = null, onSelectSubCollection, activeSubCollectionName = null, onBackToCollections, sortMode = 'recent', sortDir = 'up', onCycleSort, }) {
     const isShowingCollections = Boolean(isInsideSubCollection && collections && collections.length > 0);
     const tabsList = isShowingCollections
         ? collections
@@ -4553,11 +4649,11 @@ function LibraryCategoryBar({ categories, activeCategoryId, onSelectCategory, fo
                                     }
                                     handleSelectTab(item.id);
                                 }, children: [SP_JSX.jsx("span", { className: "sgl-tab-label", children: item.name }), SP_JSX.jsx("span", { className: "sgl-tab-count", children: item.count }), SP_JSX.jsx("div", { className: "sgl-tab-line" })] }, item.id));
-                        }) }), SP_JSX.jsx("span", { className: "sgl-bumper-badge", children: "R1" })] })), SP_JSX.jsxs("div", { className: "sgl-header-right", children: [SP_JSX.jsx(GlanceTopBarActions, {}), SP_JSX.jsxs("button", { type: "button", className: "sgl-sort-btn", onClick: (e) => {
+                        }) }), SP_JSX.jsx("span", { className: "sgl-bumper-badge", children: "R1" })] })), SP_JSX.jsxs("div", { className: "sgl-header-right", children: [SP_JSX.jsxs("button", { type: "button", className: "sgl-sort-btn", onClick: (e) => {
                             e.preventDefault();
                             e.stopPropagation();
                             onCycleSort?.();
-                        }, title: `Current sort: ${SORT_LABELS[sortMode]}. Click to cycle.`, children: [SP_JSX.jsx("span", { className: "sgl-sort-icon", children: SORT_ICONS[sortMode] }), SP_JSX.jsx("span", { className: "sgl-sort-text", children: SORT_LABELS[sortMode] })] }), SP_JSX.jsx("div", { className: "sgl-header-info", children: isShowingCollections
+                        }, title: `Current sort: ${SORT_LABELS[sortMode]} ${sortArrow(sortDir)} (${SORT_DIR_HINTS[sortMode]?.[sortDir] ?? ''}). Click to change.`, children: [SP_JSX.jsx("span", { className: "sgl-sort-icon", children: SORT_ICONS[sortMode] }), SP_JSX.jsx("span", { className: "sgl-sort-text", children: SORT_LABELS[sortMode] }), SP_JSX.jsx("span", { className: "sgl-sort-arrow", children: sortArrow(sortDir) })] }), SP_JSX.jsx("div", { className: "sgl-header-info", children: isShowingCollections
                             ? `${activeItem?.count ?? 0} GAMES`
                             : activeSubCollectionName
                                 ? 'IN COLLECTION'
@@ -5081,6 +5177,30 @@ function checkImageLoads(url, timeoutMs = 2500) {
         img.src = url;
     });
 }
+/** Loads an image and reports whether it is (close to) square and not a tiny icon. */
+function checkSquareImage(url) {
+    return new Promise((resolve) => {
+        try {
+            const img = new Image();
+            img.onload = () => {
+                const w = img.naturalWidth, h = img.naturalHeight;
+                resolve(w >= 100 && h >= 100 && Math.abs(w / h - 1) <= 0.12);
+            };
+            img.onerror = () => resolve(false);
+            img.src = url;
+        }
+        catch {
+            resolve(false);
+        }
+    });
+}
+async function findFirstSquareImage(urls) {
+    for (const url of urls) {
+        if (await checkSquareImage(url))
+            return url;
+    }
+    return null;
+}
 async function findFirstWorkingImage(urls) {
     for (const url of urls) {
         if (await checkImageLoads(url)) {
@@ -5099,7 +5219,7 @@ function resolveGameArt(game) {
     const promise = (async () => {
         // 0. Soundtracks: square album art, shown in a square card (like Steam).
         if (game.isSoundtrack) {
-            const squareUrl = await findFirstWorkingImage(squareSoundtrackUrls(game.appId, browserStores));
+            const squareUrl = await findFirstSquareImage(squareSoundtrackUrls(game.appId, browserStores));
             if (squareUrl) {
                 const res = { mode: 'banner', url: squareUrl };
                 cardArtMemo.set(game.appId, res);
@@ -5836,6 +5956,14 @@ function InspectorGameCover({ game, onOpen }) {
         const loaded = e?.currentTarget?.getAttribute?.('src') ?? '';
         if (!loaded || loaded !== posterSrc)
             return;
+        if (game.isSoundtrack && posterIdx + 1 < posterCandidates.length) {
+            const el = e.currentTarget;
+            const w = el?.naturalWidth ?? 0, h = el?.naturalHeight ?? 0;
+            if (w > 0 && h > 0 && (Math.abs(w / h - 1) > 0.12 || w < 100)) {
+                setPosterState({ appId: game.appId, idx: posterIdx + 1, error: false, loaded: false });
+                return;
+            }
+        }
         setPosterState((st) => (st.appId === game.appId ? { ...st, loaded: true } : st));
         setCachedCoverUrl(game.appId, loaded);
     };
@@ -6942,7 +7070,7 @@ const LIBRARY_CSS = `
 .sgl-top-status {
     display: flex !important;
     align-items: center !important;
-    gap: ${d(12)} !important;
+    gap: ${d(16)} !important;
     margin-left: auto !important;
     padding-left: ${d(10)} !important;
     flex-shrink: 0 !important;
@@ -6996,8 +7124,8 @@ const LIBRARY_CSS = `
 .sgl-top-status-item {
     display: inline-flex !important;
     align-items: center !important;
-    gap: ${d(5)} !important;
-    font-size: ${d(13)} !important;
+    gap: ${d(6)} !important;
+    font-size: ${d(16)} !important;
     font-weight: 600 !important;
     line-height: 1 !important;
     color: rgba(255, 255, 255, 0.9) !important;
@@ -7006,7 +7134,7 @@ const LIBRARY_CSS = `
 }
 
 .sgl-top-status-item svg {
-    height: ${d(16)} !important;
+    height: ${d(21)} !important;
     width: auto !important;
     flex: 0 0 auto !important;
     display: block !important;
@@ -7021,7 +7149,14 @@ const LIBRARY_CSS = `
 }
 
 .sgl-top-status-clock {
-    font-size: ${d(14)} !important;
+    font-size: ${d(18)} !important;
+    font-weight: 700 !important;
+}
+
+.sgl-sort-arrow {
+    font-size: ${d(12)} !important;
+    font-weight: 800 !important;
+    margin-left: ${d(2)} !important;
 }
 
 .sgl-top-action {
@@ -11359,6 +11494,7 @@ function rawAppToItem(app, isRunning, soundtrackAppIds, installedAppIds) {
         source,
         compat,
         lastPlayed: mergedOverview?.rt_last_time_played ?? app.rt_last_time_played,
+        dateAdded: Number(mergedOverview?.rt_purchased_time ?? app.rt_purchased_time ?? details?.rt_purchased_time) || 0,
         sizeOnDisk: size,
     };
 }
@@ -11691,33 +11827,36 @@ function SpotlightLibrary({ mockGames, compact, fallbackTree }) {
     const isCollectionsView = isCollectionsTab && !isInsideSubCollection;
     const gameColumns = Math.min(7, Math.max(3, currentSettings.libraryGridColumns ?? 3));
     const collectionColumns = Math.min(8, Math.max(3, currentSettings.libraryCollectionColumns ?? 5));
-    const columns = isCollectionsView ? collectionColumns : gameColumns;
+    const soundtrackColumns = Math.min(8, Math.max(3, currentSettings.librarySoundtrackColumns ?? 4));
+    const isSoundtracksView = !isCollectionsTab && Boolean(activeCategory?.isSoundtracksTab || activeCategory?.id === 'soundtracks');
+    const columns = isCollectionsView ? collectionColumns : isSoundtracksView ? soundtrackColumns : gameColumns;
     const activeSubCollection = SP_REACT.useMemo(() => {
         if (!isInsideSubCollection || !selectedCollectionId)
             return null;
         return activeCategory?.collections?.find((c) => String(c.id) === String(selectedCollectionId) || c.name === selectedCollectionId) ?? null;
     }, [isInsideSubCollection, activeCategory, selectedCollectionId]);
     const sortMode = currentSettings.librarySort ?? 'recent';
+    const sortDir = currentSettings.librarySortDir === 'down' ? 'down' : 'up';
     const handleCycleSort = SP_REACT.useCallback(() => {
-        const nextSort = getNextSortMode(sortMode);
-        void settings.setLibrarySort(nextSort);
+        const next = getNextSort(sortMode, sortDir);
+        void settings.setLibrarySortAndDir(next.mode, next.dir);
         playNavSound('ChangeTabs');
         setSelectedGameIdx(0);
-    }, [sortMode]);
+    }, [sortMode, sortDir]);
     // Items list for current view: games in standard categories or sub-collection; collections in collections overview
     const currentGames = SP_REACT.useMemo(() => {
         const rawGames = isCollectionsTab
             ? (activeSubCollection?.games ?? [])
             : (activeCategory?.games ?? []);
-        return sortGames(rawGames, sortMode);
-    }, [isCollectionsTab, activeSubCollection, activeCategory, sortMode]);
+        return sortGames(rawGames, sortMode, sortDir);
+    }, [isCollectionsTab, activeSubCollection, activeCategory, sortMode, sortDir]);
     const currentCollections = SP_REACT.useMemo(() => {
         if (isCollectionsTab && !isInsideSubCollection) {
             const rawCols = activeCategory?.collections ?? [];
-            return sortCollections(rawCols, sortMode);
+            return sortCollections(rawCols, sortMode, sortDir);
         }
         return [];
-    }, [isCollectionsTab, isInsideSubCollection, activeCategory, sortMode]);
+    }, [isCollectionsTab, isInsideSubCollection, activeCategory, sortMode, sortDir]);
     const totalItemsCount = isCollectionsTab && !isInsideSubCollection ? currentCollections.length : currentGames.length;
     const initialGameIdx = SP_REACT.useMemo(() => {
         if (initialRestore) {
@@ -12445,7 +12584,7 @@ function SpotlightLibrary({ mockGames, compact, fallbackTree }) {
             // Keep the active focus zone
         }, onButtonDown: onGamepadButtonDown, onActivate: handleRootActivate, onCancel: onCancel, children: [SP_JSX.jsx("style", { children: LIBRARY_CSS }), enterOff && SP_JSX.jsx("style", { children: enterOff }), SP_JSX.jsx(LibraryStatusBar, { hidden: isLeaving }), SP_JSX.jsx(LibraryBackground, { candidates: heroCandidates }), SP_JSX.jsx(LibraryCategoryBar, { categories: categories, activeCategoryId: activeCategoryId, onSelectCategory: selectCategory, focusedIndex: isInsideSubCollection
                     ? (activeCollectionIdx >= 0 ? activeCollectionIdx : 0)
-                    : (activeCategoryIdx >= 0 ? activeCategoryIdx : 0), isHeaderFocused: focusZone === 'tabs' && !customizingCollection, isInsideSubCollection: isInsideSubCollection, collections: activeCategory?.collections ?? [], activeSubCollectionId: selectedCollectionId, onSelectSubCollection: selectSubCollection, activeSubCollectionName: activeSubCollection?.name, onBackToCollections: handleBackToCollections, sortMode: sortMode, onCycleSort: handleCycleSort }), SP_JSX.jsxs("div", { className: "sgl-body", children: [SP_JSX.jsx(LibraryInspector, { game: selectedGame, collection: selectedCollectionItem, isCollectionView: isCollectionsTab && !isInsideSubCollection, accent: Boolean(currentSettings.dimUninstalledGames && selectedGame && !selectedGame.installed) ? '#707784' : gameAccent, description: gameDesc, hltbMainHours: hltbHours, preferLogos: currentSettings.gameLogo, onPlay: () => handlePlayGame(), onDetails: (sourceEl) => handleDetails(selectedGame, sourceEl), onOpenCollection: handleOpenCollection, onCustomizeCollection: () => setCustomizingCollection(selectedCollectionItem) }), SP_JSX.jsx(LibraryGrid, { games: currentGames, collections: currentCollections, isCollectionsView: isCollectionsTab && !isInsideSubCollection, selectedIndex: selectedGameIdx, accent: gameAccent, dimUninstalled: Boolean(currentSettings.dimUninstalledGames), columns: columns, isGridFocused: focusZone === 'grid' && !customizingCollection, onSelectGame: handleSelectGame, onLaunchGame: handleDetails, onOpenCollection: handleOpenCollection, onCustomizeCollection: (col) => setCustomizingCollection(col), onContextMenu: handleContextMenu }, activeCategoryId + (selectedCollectionId ? `-${selectedCollectionId}` : ''))] }), customizingCollection && (SP_JSX.jsx(CollectionArtModal, { collection: customizingCollection, accent: gameAccent || DEFAULT_ACCENT, isOpen: Boolean(customizingCollection), onClose: handleCloseModal, onSaveSuccess: handleCloseModal, registerGamepadHandler: (fn) => {
+                    : (activeCategoryIdx >= 0 ? activeCategoryIdx : 0), isHeaderFocused: focusZone === 'tabs' && !customizingCollection, isInsideSubCollection: isInsideSubCollection, collections: activeCategory?.collections ?? [], activeSubCollectionId: selectedCollectionId, onSelectSubCollection: selectSubCollection, activeSubCollectionName: activeSubCollection?.name, onBackToCollections: handleBackToCollections, sortMode: sortMode, sortDir: sortDir, onCycleSort: handleCycleSort }), SP_JSX.jsxs("div", { className: "sgl-body", children: [SP_JSX.jsx(LibraryInspector, { game: selectedGame, collection: selectedCollectionItem, isCollectionView: isCollectionsTab && !isInsideSubCollection, accent: Boolean(currentSettings.dimUninstalledGames && selectedGame && !selectedGame.installed) ? '#707784' : gameAccent, description: gameDesc, hltbMainHours: hltbHours, preferLogos: currentSettings.gameLogo, onPlay: () => handlePlayGame(), onDetails: (sourceEl) => handleDetails(selectedGame, sourceEl), onOpenCollection: handleOpenCollection, onCustomizeCollection: () => setCustomizingCollection(selectedCollectionItem) }), SP_JSX.jsx(LibraryGrid, { games: currentGames, collections: currentCollections, isCollectionsView: isCollectionsTab && !isInsideSubCollection, selectedIndex: selectedGameIdx, accent: gameAccent, dimUninstalled: Boolean(currentSettings.dimUninstalledGames), columns: columns, isGridFocused: focusZone === 'grid' && !customizingCollection, onSelectGame: handleSelectGame, onLaunchGame: handleDetails, onOpenCollection: handleOpenCollection, onCustomizeCollection: (col) => setCustomizingCollection(col), onContextMenu: handleContextMenu }, activeCategoryId + (selectedCollectionId ? `-${selectedCollectionId}` : ''))] }), customizingCollection && (SP_JSX.jsx(CollectionArtModal, { collection: customizingCollection, accent: gameAccent || DEFAULT_ACCENT, isOpen: Boolean(customizingCollection), onClose: handleCloseModal, onSaveSuccess: handleCloseModal, registerGamepadHandler: (fn) => {
                     modalGamepadHandlerRef.current = fn;
                 }, registerKeyDownHandler: (fn) => {
                     modalKeyDownHandlerRef.current = fn;
