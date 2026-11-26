@@ -5177,6 +5177,71 @@ function checkImageLoads(url, timeoutMs = 2500) {
         img.src = url;
     });
 }
+/** Size of an image once loaded, or null if it fails. */
+function measureImage(url) {
+    return new Promise((resolve) => {
+        try {
+            const img = new Image();
+            const timer = setTimeout(() => resolve(null), 6000);
+            img.onload = () => {
+                clearTimeout(timer);
+                resolve({ w: img.naturalWidth, h: img.naturalHeight });
+            };
+            img.onerror = () => {
+                clearTimeout(timer);
+                resolve(null);
+            };
+            img.src = url;
+        }
+        catch {
+            resolve(null);
+        }
+    });
+}
+const isSquareSize = (size) => Boolean(size && size.w >= 100 && size.h >= 100 && Math.abs(size.w / size.h - 1) <= 0.12);
+/** Steam's own soundtrack cover (what its soundtrack page shows), when Steam provides it. */
+const soundtrackDetailsMemo = new Map();
+function soundtrackDetailsCover(appId) {
+    if (soundtrackDetailsMemo.has(appId))
+        return soundtrackDetailsMemo.get(appId);
+    const promise = (async () => {
+        try {
+            const apps = globalThis.SteamClient?.Apps;
+            if (typeof apps?.GetSoundtrackDetails !== 'function')
+                return null;
+            const details = await Promise.race([
+                apps.GetSoundtrackDetails(appId),
+                new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+            ]);
+            const url = details?.strCoverImageAssetURL;
+            if (typeof url !== 'string' || !url)
+                return null;
+            if (/^(https?:|data:)/i.test(url))
+                return url;
+            return url.startsWith('/') ? `${HOST}${url}` : `${HOST}/${url}`;
+        }
+        catch {
+            return null;
+        }
+    })();
+    soundtrackDetailsMemo.set(appId, promise);
+    return promise;
+}
+/** Soundtrack art report, written once per soundtrack per session to game-glance.log. */
+const logSoundtrackArtCall = callable('log_home_error');
+const soundtrackArtLogged = new Set();
+function logSoundtrackArt(game, lines, picked) {
+    try {
+        if (soundtrackArtLogged.has(game.appId) || soundtrackArtLogged.size >= 40)
+            return;
+        soundtrackArtLogged.add(game.appId);
+        const text = `soundtrack-art ${game.appId} "${String(game.name ?? '').slice(0, 60)}" picked=${picked ?? 'NONE (fell back to other art)'}\n` + lines.map((l) => `    ${l}`).join('\n');
+        void logSoundtrackArtCall(text).catch(() => { });
+    }
+    catch {
+        // logging must never break the library
+    }
+}
 /** Loads an image and reports whether it is (close to) square and not a tiny icon. */
 function checkSquareImage(url) {
     return new Promise((resolve) => {
@@ -5219,9 +5284,23 @@ function resolveGameArt(game) {
     const promise = (async () => {
         // 0. Soundtracks: square album art, shown in a square card (like Steam).
         if (game.isSoundtrack) {
-            const squareUrl = await findFirstSquareImage(squareSoundtrackUrls(game.appId, browserStores));
+            const fromDetails = await soundtrackDetailsCover(game.appId);
+            const candidates = [...new Set([...(fromDetails ? [fromDetails] : []), ...squareSoundtrackUrls(game.appId, browserStores)])];
+            const report = [];
+            let squareUrl = null;
+            for (const url of candidates) {
+                const size = await measureImage(url);
+                report.push(`${size ? `${size.w}x${size.h}` : 'failed'}${isSquareSize(size) ? ' SQUARE' : ''}  ${url}`);
+                if (isSquareSize(size)) {
+                    squareUrl = url;
+                    break;
+                }
+            }
+            if (candidates.length === 0)
+                report.push('no square-art sources offered by Steam for this soundtrack');
+            logSoundtrackArt(game, report, squareUrl);
             if (squareUrl) {
-                const res = { mode: 'banner', url: squareUrl };
+                const res = { mode: 'banner', url: squareUrl, square: true };
                 cardArtMemo.set(game.appId, res);
                 return res;
             }
@@ -5930,6 +6009,19 @@ function InspectorFanCover({ game, className }) {
 }
 function InspectorGameCover({ game, onOpen }) {
     const artworkVersion = useArtworkVersion();
+    const [soundtrackArtTick, setSoundtrackArtTick] = SP_REACT.useState(0);
+    SP_REACT.useEffect(() => {
+        if (!game.isSoundtrack || cardArtMemo.get(game.appId)?.square)
+            return undefined;
+        let active = true;
+        resolveGameArt(game).then((res) => {
+            if (active && res?.square)
+                setSoundtrackArtTick((t) => t + 1);
+        });
+        return () => {
+            active = false;
+        };
+    }, [game.appId, game.isSoundtrack]);
     // 1. Primary: Square cover for soundtracks (1:1), Vertical capsule art for games (2:3)
     const posterCandidates = SP_REACT.useMemo(() => {
         if (game.capsuleUrl)
@@ -5938,10 +6030,12 @@ function InspectorGameCover({ game, onOpen }) {
         if (cached !== undefined)
             return cached ? [cached] : [];
         if (game.isSoundtrack) {
-            return squareSoundtrackUrls(game.appId, browserStores);
+            const found = cardArtMemo.get(game.appId);
+            const list = squareSoundtrackUrls(game.appId, browserStores);
+            return found?.square && found.url ? [...new Set([found.url, ...list])] : list;
         }
         return capsuleUrls(game.appId, browserStores);
-    }, [game.appId, game.capsuleUrl, game.isSoundtrack, artworkVersion]);
+    }, [game.appId, game.capsuleUrl, game.isSoundtrack, artworkVersion, soundtrackArtTick]);
     const [posterState, setPosterState] = SP_REACT.useState(() => ({ appId: game.appId, idx: 0, error: posterCandidates.length === 0, loaded: Boolean(getCachedCoverUrl(game.appId)) }));
     SP_REACT.useEffect(() => {
         setPosterState({ appId: game.appId, idx: 0, error: posterCandidates.length === 0, loaded: Boolean(getCachedCoverUrl(game.appId)) });
