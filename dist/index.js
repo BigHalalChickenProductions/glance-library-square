@@ -2547,7 +2547,7 @@ function SettingsPanel() {
                                         { data: 'contain', label: 'Contain (Fit whole image)' },
                                         { data: 'fill', label: 'Stretch to fill' },
                                         { data: 'center', label: 'Centered (Default icon badge)' },
-                                    ], selectedOption: collectionArtFit, onChange: (val) => settings.setCollectionArtFit(val.data) }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Status Bar", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Tabs at the top of the screen", description: "Moves the tab bar up into Steam's top bar, with search, your profile, Wi-Fi, battery and the clock built in. Press Up from the tabs to use Steam's own top bar.", checked: topTabBar, onChange: (value) => settings.setTopTabBar(value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Status bar", description: "Recycles the sleek glass status bar with clock, battery level, and connection status at the top right of the library.", checked: libraryStatusBar, onChange: (value) => settings.setLibraryStatusBar(value) }) }), libraryStatusBar && !topTabBar && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Profile picture", description: "Displays your Steam avatar ringed in your online status colour in the status bar instead of the dot.", checked: statusAvatar, onChange: (value) => settings.setStatusAvatar(value) }) }))] }), SP_JSX.jsx(DFL.PanelSection, { title: "Visuals & Effects", children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Unhighlight uninstalled games", description: "Applies neutral gray accents and grayscale tones to games in the library grid that are not installed on this device.", checked: dimUninstalledGames, onChange: (value) => settings.setDimUninstalledGames(value) }) }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Artwork & Cache", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Forces Steam covers and collection artwork to re-fetch and refresh in the library.", onClick: () => {
+                                    ], selectedOption: collectionArtFit, onChange: (val) => settings.setCollectionArtFit(val.data) }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Status Bar", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Tabs at the top of the screen", description: "Moves the tab bar up into Steam's top bar, with search, Wi-Fi, battery, the clock and your profile built in. Tabs scroll sideways when there are many. Press Up from the tabs to use Steam's own top bar.", checked: topTabBar, onChange: (value) => settings.setTopTabBar(value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Status bar", description: "Recycles the sleek glass status bar with clock, battery level, and connection status at the top right of the library.", checked: libraryStatusBar, onChange: (value) => settings.setLibraryStatusBar(value) }) }), libraryStatusBar && !topTabBar && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Profile picture", description: "Displays your Steam avatar ringed in your online status colour in the status bar instead of the dot.", checked: statusAvatar, onChange: (value) => settings.setStatusAvatar(value) }) }))] }), SP_JSX.jsx(DFL.PanelSection, { title: "Visuals & Effects", children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Unhighlight uninstalled games", description: "Applies neutral gray accents and grayscale tones to games in the library grid that are not installed on this device.", checked: dimUninstalledGames, onChange: (value) => settings.setDimUninstalledGames(value) }) }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Artwork & Cache", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Forces Steam covers and collection artwork to re-fetch and refresh in the library.", onClick: () => {
                                         reloadArtworkCache();
                                         toaster.toast({ title: PLUGIN_NAME, body: 'Artwork reloaded.' });
                                     }, children: "Reload Steam artwork" }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Clears all cached HowLongToBeat times, descriptions, accent colors, and reloads artwork.", onClick: async () => {
@@ -4553,7 +4553,7 @@ function LibraryCategoryBar({ categories, activeCategoryId, onSelectCategory, fo
                                         : (activeItem.id === 'collections' || activeItem.isCollectionsTab)
                                             ? `${activeItem.count} COLLECTIONS`
                                             : `${activeItem.count} GAMES`
-                                    : '' })] })] }));
+                                    : '' }), SP_JSX.jsx(GlanceTopBarStatus, {})] })] }));
 }
 
 const BRIDGE_FADE_EASE = 'cubic-bezier(.2,.65,.3,1)';
@@ -6884,8 +6884,66 @@ const LIBRARY_CSS = `
     background: rgba(8, 11, 18, 0.72) !important;
 }
 
+.sgl-root.sgl-top-tabs .sgl-header,
 .sgl-root.sgl-top-tabs.sgl-has-status-bar .sgl-header {
-    padding-right: ${d(196)} !important;
+    padding-right: ${d(10)} !important;
+    gap: ${d(12)} !important;
+}
+
+.sgl-root.sgl-top-tabs .sgl-brand {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+}
+
+.sgl-root.sgl-top-tabs .sgl-tabs-container {
+    justify-content: flex-start !important;
+    max-width: none !important;
+    width: 100% !important;
+}
+
+.sgl-root.sgl-top-tabs .sgl-header-right {
+    flex: 0 0 auto !important;
+    gap: ${d(10)} !important;
+}
+
+.sgl-top-status {
+    display: flex !important;
+    align-items: center !important;
+    gap: ${d(12)} !important;
+    margin-left: ${d(4)} !important;
+    flex-shrink: 0 !important;
+}
+
+.sgl-top-status-item {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: ${d(5)} !important;
+    font-size: ${d(13)} !important;
+    font-weight: 600 !important;
+    line-height: 1 !important;
+    color: rgba(255, 255, 255, 0.9) !important;
+    white-space: nowrap !important;
+    font-variant-numeric: tabular-nums !important;
+}
+
+.sgl-top-status-item svg {
+    height: ${d(16)} !important;
+    width: auto !important;
+    flex: 0 0 auto !important;
+    display: block !important;
+}
+
+.sgl-top-status-low {
+    color: #f85149 !important;
+}
+
+.sgl-top-status-offline svg {
+    opacity: 0.6 !important;
+}
+
+.sgl-top-status-clock {
+    font-size: ${d(14)} !important;
 }
 
 .sgl-top-action {
@@ -10567,11 +10625,8 @@ const GLANCE_TOP_AVATAR_STYLE = {
 };
 function GlanceTopBarActions() {
     const { topTabBar } = useSettings();
-    const self = useSelfPersona();
     if (!topTabBar)
         return null;
-    const dot = personaDot(self);
-    const avatar = avatarView(self, true);
     const run = (e, selectors, what) => {
         e.preventDefault();
         e.stopPropagation();
@@ -10585,7 +10640,35 @@ function GlanceTopBarActions() {
                     SP_JSX.jsx(FaSearch, { size: 12 }),
                     SP_JSX.jsx("span", { className: "sgl-sort-text", children: "Search" }),
                 ] }),
-            SP_JSX.jsx("button", { type: "button", className: "sgl-sort-btn sgl-top-action sgl-top-avatar-btn", title: "Profile", onClick: (e) => run(e, GLANCE_PROFILE_SELECTORS, 'profile menu'), children: avatar
+        ] });
+}
+/** Wi-Fi, battery, clock and profile, drawn inside the top tab bar itself. */
+function GlanceTopBarStatus() {
+    const { topTabBar } = useSettings();
+    const self = useSelfPersona();
+    SP_REACT.useEffect(() => {
+        startStatus();
+    }, []);
+    const { battery, connection } = SP_REACT.useSyncExternalStore(subscribeStatus, statusState, statusState);
+    const clock = useClock();
+    if (!topTabBar)
+        return null;
+    const dot = personaDot(self);
+    const avatar = avatarView(self, true);
+    const conn = connection ? CONNECTION[connection] : null;
+    const openProfile = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const doc = e.currentTarget?.ownerDocument ?? null;
+        if (!pressSteamTopBarControl(doc, GLANCE_PROFILE_SELECTORS)) {
+            toaster.toast({ title: PLUGIN_NAME, body: "Couldn't open Steam's profile menu. With a controller, press Up from the tabs to reach Steam's top bar." });
+        }
+    };
+    return SP_JSX.jsxs("div", { className: "sgl-top-status", children: [
+            conn && SP_JSX.jsx("span", { className: `sgl-top-status-item sgl-top-status-${connection}`, title: conn.label, children: SP_JSX.jsx(conn.icon, {}) }),
+            battery && SP_JSX.jsxs("span", { className: `sgl-top-status-item${battery.low ? ' sgl-top-status-low' : ''}`, title: `${battery.percent}%${battery.charging ? ', charging' : ''}`, children: [SP_JSX.jsx(BatteryIcon, { battery: battery }), `${battery.percent}%`] }),
+            SP_JSX.jsx("span", { className: "sgl-top-status-item sgl-top-status-clock", children: clock }),
+            SP_JSX.jsx("button", { type: "button", className: "sgl-sort-btn sgl-top-action sgl-top-avatar-btn", title: "Profile", onClick: openProfile, children: avatar
                     ? SP_JSX.jsx("span", { style: { ...GLANCE_TOP_AVATAR_STYLE, backgroundImage: `url(${avatar.url})`, border: `2px solid ${avatar.ring}` } })
                     : SP_JSX.jsx("span", { style: { ...GLANCE_TOP_AVATAR_STYLE, width: 12, height: 12, background: dot === 'online' ? '#4cff8f' : dot === 'away' ? '#4cb4ff' : 'rgba(196, 201, 209, 0.85)' } }) }),
         ] });
@@ -10631,7 +10714,7 @@ function LibraryStatusBar({ hidden = false }) {
                         zIndex: STATUS_Z,
                         opacity: hidden ? 0 : 1,
                         transition: 'opacity 200ms',
-                    }, children: [SP_JSX.jsx("style", { children: COVER_CSS }), topTabBar && SP_JSX.jsx("style", { children: `[${COVERED}] { pointer-events: none !important; }` }), SP_JSX.jsx("style", { children: STATUS_BAR_CSS }), libraryStatusBar && SP_JSX.jsxs("div", { className: `sgl-topbar-status${away ? ' sgl-topbar-away' : ''}`, "aria-hidden": away, style: style, children: [SP_JSX.jsxs("div", { className: "sgl-topbar-pill", children: [conn && (SP_JSX.jsx("span", { className: `sgl-topbar-item sgl-topbar-${connection}`, "aria-label": conn.label, children: SP_JSX.jsx(conn.icon, {}) })), battery && (SP_JSX.jsxs("span", { className: `sgl-topbar-item${battery.low ? ' sgl-topbar-low' : ''}`, "aria-label": `${battery.percent}%${battery.charging ? ', charging' : ''}`, children: [SP_JSX.jsx(BatteryIcon, { battery: battery }), battery.percent, "%"] })), SP_JSX.jsx("span", { className: "sgl-topbar-item", children: clock })] }), avatar && dot ? (SP_JSX.jsxs("div", { className: "sgl-topbar-avatar-wrap", children: [SP_JSX.jsx("span", { className: "sgl-topbar-avatar", role: "img", "aria-label": DOT_LABEL[dot], style: {
+                    }, children: [SP_JSX.jsx("style", { children: COVER_CSS }), topTabBar && SP_JSX.jsx("style", { children: `[${COVERED}] { pointer-events: none !important; }` }), SP_JSX.jsx("style", { children: STATUS_BAR_CSS }), libraryStatusBar && !topTabBar && SP_JSX.jsxs("div", { className: `sgl-topbar-status${away ? ' sgl-topbar-away' : ''}`, "aria-hidden": away, style: style, children: [SP_JSX.jsxs("div", { className: "sgl-topbar-pill", children: [conn && (SP_JSX.jsx("span", { className: `sgl-topbar-item sgl-topbar-${connection}`, "aria-label": conn.label, children: SP_JSX.jsx(conn.icon, {}) })), battery && (SP_JSX.jsxs("span", { className: `sgl-topbar-item${battery.low ? ' sgl-topbar-low' : ''}`, "aria-label": `${battery.percent}%${battery.charging ? ', charging' : ''}`, children: [SP_JSX.jsx(BatteryIcon, { battery: battery }), battery.percent, "%"] })), SP_JSX.jsx("span", { className: "sgl-topbar-item", children: clock })] }), avatar && dot ? (SP_JSX.jsxs("div", { className: "sgl-topbar-avatar-wrap", children: [SP_JSX.jsx("span", { className: "sgl-topbar-avatar", role: "img", "aria-label": DOT_LABEL[dot], style: {
                                                 backgroundImage: `url(${avatar.url})`,
                                                 '--gh-avatar-ring': avatar.ring,
                                             } }), SP_JSX.jsx("span", { className: `sgl-topbar-dot sgl-topbar-dot-${dot}`, style: {
