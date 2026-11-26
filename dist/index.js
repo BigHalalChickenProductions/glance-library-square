@@ -2239,6 +2239,12 @@ function soundtrackCoverUrls(appId, stores) {
     ];
     return currentArtworkVersion ? list.map((u) => withArtworkVersion(u)) : list;
 }
+/** Soundtrack art that is square (album covers); wide store banners are left out. */
+function squareSoundtrackUrls(appId, stores) {
+    const wide = /(capsule_616x353|header)(\.[a-z]+)?(\?|$)/i;
+    const header = guarded(() => stores.overview(appId))?.header_filename;
+    return soundtrackCoverUrls(appId, stores).filter((u) => !wide.test(u) && !(header && u.includes(String(header))));
+}
 /** Custom portrait art first (`appStore.GetCustomVerticalCapsuleURLs`: `/customimages/<id>p.jpg|.png`), then the assets. */
 function capsuleUrls(appId, stores) {
     const custom = listed(() => stores.customCapsule?.(appId));
@@ -5091,6 +5097,15 @@ function resolveGameArt(game) {
     if (pending)
         return pending;
     const promise = (async () => {
+        // 0. Soundtracks: square album art, shown in a square card (like Steam).
+        if (game.isSoundtrack) {
+            const squareUrl = await findFirstWorkingImage(squareSoundtrackUrls(game.appId, browserStores));
+            if (squareUrl) {
+                const res = { mode: 'banner', url: squareUrl };
+                cardArtMemo.set(game.appId, res);
+                return res;
+            }
+        }
         // 1. Primary: Long horizontal banner (soundtracks check square cover first)
         const bannerCandidates = game.landscapeUrl
             ? [game.landscapeUrl]
@@ -5182,7 +5197,7 @@ const BannerCard = SP_REACT.memo(function BannerCard({ game, index, isFocused, a
     }, [isFocused]);
     const isUninstalled = Boolean(dimUninstalled && !game.installed);
     const cardAccent = isUninstalled ? '#707784' : accent;
-    return (SP_JSX.jsxs("div", { ref: cardRef, role: "button", tabIndex: 0, "data-app-id": game.appId, className: `sgl-card${isFocused ? ' focused' : ''}${isUninstalled ? ' sgl-card-uninstalled' : ''}`, style: {
+    return (SP_JSX.jsxs("div", { ref: cardRef, role: "button", tabIndex: 0, "data-app-id": game.appId, className: `sgl-card${game.isSoundtrack ? ' sgl-card-square' : ''}${isFocused ? ' focused' : ''}${isUninstalled ? ' sgl-card-uninstalled' : ''}`, style: {
             '--accent': cardAccent,
             '--accent-glow': `${cardAccent}55`,
         }, onClick: (e) => {
@@ -5271,7 +5286,7 @@ function MiniCover$1({ game, className }) {
         if (game.capsuleUrl)
             return [game.capsuleUrl];
         if (game.isSoundtrack)
-            return soundtrackCoverUrls(game.appId, browserStores);
+            return squareSoundtrackUrls(game.appId, browserStores);
         return capsuleUrls(game.appId, browserStores);
     }, [game, artworkVersion]);
     const [src, setSrc] = SP_REACT.useState(candidates[0] ?? '');
@@ -5767,7 +5782,7 @@ function InspectorFanCover({ game, className }) {
         if (game.capsuleUrl)
             return [game.capsuleUrl];
         if (game.isSoundtrack)
-            return soundtrackCoverUrls(game.appId, browserStores);
+            return squareSoundtrackUrls(game.appId, browserStores);
         return capsuleUrls(game.appId, browserStores);
     }, [game, artworkVersion]);
     const [src, setSrc] = SP_REACT.useState(candidates[0] ?? '');
@@ -5803,33 +5818,37 @@ function InspectorGameCover({ game, onOpen }) {
         if (cached !== undefined)
             return cached ? [cached] : [];
         if (game.isSoundtrack) {
-            return soundtrackCoverUrls(game.appId, browserStores);
+            return squareSoundtrackUrls(game.appId, browserStores);
         }
         return capsuleUrls(game.appId, browserStores);
     }, [game.appId, game.capsuleUrl, game.isSoundtrack, artworkVersion]);
-    const [posterSrc, setPosterSrc] = SP_REACT.useState(posterCandidates[0] ?? '');
-    const [posterIdx, setPosterIdx] = SP_REACT.useState(0);
-    const [hasPosterError, setHasPosterError] = SP_REACT.useState(posterCandidates.length === 0);
-    const [isPosterLoaded, setIsPosterLoaded] = SP_REACT.useState(Boolean(getCachedCoverUrl(game.appId)));
+    const [posterState, setPosterState] = SP_REACT.useState(() => ({ appId: game.appId, idx: 0, error: posterCandidates.length === 0, loaded: Boolean(getCachedCoverUrl(game.appId)) }));
     SP_REACT.useEffect(() => {
-        setPosterIdx(0);
-        setHasPosterError(posterCandidates.length === 0);
-        setIsPosterLoaded(Boolean(getCachedCoverUrl(game.appId)));
-        setPosterSrc(posterCandidates[0] ?? '');
+        setPosterState({ appId: game.appId, idx: 0, error: posterCandidates.length === 0, loaded: Boolean(getCachedCoverUrl(game.appId)) });
     }, [posterCandidates, game.appId]);
-    const handlePosterLoad = () => {
-        setIsPosterLoaded(true);
-        if (posterSrc)
-            setCachedCoverUrl(game.appId, posterSrc);
+    // State left over from the previous game is ignored until the reset above lands.
+    const posterFresh = posterState.appId === game.appId && posterState.idx < posterCandidates.length;
+    const posterIdx = posterFresh ? posterState.idx : 0;
+    const posterSrc = posterCandidates[posterIdx] ?? '';
+    const hasPosterError = posterFresh ? posterState.error : posterCandidates.length === 0;
+    const isPosterLoaded = posterFresh ? posterState.loaded : Boolean(getCachedCoverUrl(game.appId));
+    const handlePosterLoad = (e) => {
+        const loaded = e?.currentTarget?.getAttribute?.('src') ?? '';
+        if (!loaded || loaded !== posterSrc)
+            return;
+        setPosterState((st) => (st.appId === game.appId ? { ...st, loaded: true } : st));
+        setCachedCoverUrl(game.appId, loaded);
     };
-    const handlePosterError = () => {
+    const handlePosterError = (e) => {
+        const failed = e?.currentTarget?.getAttribute?.('src') ?? '';
+        if (failed && failed !== posterSrc)
+            return;
         const next = posterIdx + 1;
         if (next < posterCandidates.length) {
-            setPosterIdx(next);
-            setPosterSrc(posterCandidates[next]);
+            setPosterState({ appId: game.appId, idx: next, error: false, loaded: false });
         }
         else {
-            setHasPosterError(true);
+            setPosterState({ appId: game.appId, idx: posterIdx, error: true, loaded: false });
             setCachedCoverUrl(game.appId, '');
         }
     };
@@ -5918,7 +5937,7 @@ function InspectorGameCover({ game, onOpen }) {
         }, className: 'sgl-poster-wrapper sgl-poster-square', style: onOpen ? { cursor: 'pointer' } : undefined, children: isPosterAvailable ? (SP_JSX.jsx("img", { src: posterSrc, alt: game.name, className: "sgl-poster-img", onLoad: handlePosterLoad, onError: handlePosterError, style: {
                 opacity: isPosterLoaded ? 1 : 0,
                 transition: 'opacity 0.15s ease',
-            } })) : (SP_JSX.jsxs("div", { className: "sgl-poster-fallback", children: [bgSrc && (SP_JSX.jsx("img", { src: bgSrc, alt: "", className: "sgl-poster-fallback-bg", onError: handleBgError }, bgSrc)), SP_JSX.jsx("div", { className: "sgl-poster-fallback-overlay" }), SP_JSX.jsx("div", { className: "sgl-poster-fallback-content", children: isLogoAvailable ? (SP_JSX.jsx("img", { src: logoSrc, alt: game.name, className: "sgl-poster-fallback-logo", onError: handleLogoError }, logoSrc)) : isBannerAvailable ? (SP_JSX.jsx("img", { src: bannerSrc, alt: game.name, className: "sgl-poster-fallback-banner", onError: handleBannerError }, bannerSrc)) : (SP_JSX.jsx("div", { className: "sgl-poster-fallback-title", children: game.name })) })] })) }));
+            } }, `${game.appId}|${posterSrc}`)) : (SP_JSX.jsxs("div", { className: "sgl-poster-fallback", children: [bgSrc && (SP_JSX.jsx("img", { src: bgSrc, alt: "", className: "sgl-poster-fallback-bg", onError: handleBgError }, bgSrc)), SP_JSX.jsx("div", { className: "sgl-poster-fallback-overlay" }), SP_JSX.jsx("div", { className: "sgl-poster-fallback-content", children: isLogoAvailable ? (SP_JSX.jsx("img", { src: logoSrc, alt: game.name, className: "sgl-poster-fallback-logo", onError: handleLogoError }, logoSrc)) : isBannerAvailable ? (SP_JSX.jsx("img", { src: bannerSrc, alt: game.name, className: "sgl-poster-fallback-banner", onError: handleBannerError }, bannerSrc)) : (SP_JSX.jsx("div", { className: "sgl-poster-fallback-title", children: game.name })) })] })) }));
 }
 function CollectionInspectorView({ collection, accent, onOpenCollection, onCustomizeCollection, }) {
     const currentSettings = useSettings();
@@ -6944,21 +6963,33 @@ const LIBRARY_CSS = `
     flex-shrink: 0 !important;
 }
 
-.sgl-top-avatar-img {
+.sgl-top-avatar-frame {
     display: block !important;
     width: ${d(28)} !important;
     height: ${d(28)} !important;
+    padding: 2px !important;
     box-sizing: border-box !important;
-    border: 2px solid transparent !important;
     border-radius: var(--sgl-avatar-radius, 8px) !important;
-    background-size: cover !important;
-    background-position: center !important;
-    background-color: rgba(255, 255, 255, 0.08) !important;
+    overflow: hidden !important;
 }
 
-.sgl-top-avatar-btn:focus .sgl-top-avatar-img,
-.sgl-top-avatar-btn.gpfocus .sgl-top-avatar-img,
-.sgl-top-avatar-btn:hover .sgl-top-avatar-img {
+.sgl-top-avatar-photo {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    object-fit: cover !important;
+    border-radius: max(calc(var(--sgl-avatar-radius, 8px) - 2px), 0px) !important;
+    background: #1b2129 !important;
+    user-select: none !important;
+    -webkit-user-drag: none !important;
+}
+
+.sgl-top-avatar-btn:focus .sgl-top-avatar-frame,
+.sgl-top-avatar-btn.gpfocus .sgl-top-avatar-frame,
+.sgl-top-avatar-btn:hover .sgl-top-avatar-frame {
     box-shadow: 0 0 0 2px #fff !important;
 }
 
@@ -7699,6 +7730,11 @@ const LIBRARY_CSS = `
     gap: 14px;
     align-content: start;
     padding-bottom: 24px;
+}
+
+/* Soundtracks: square album cards, like Steam's soundtrack shelf */
+.sgl-card.sgl-card-square {
+    aspect-ratio: 1 / 1 !important;
 }
 
 /* Horizontal Banner Card */
@@ -10712,9 +10748,9 @@ function GlanceTopBarStatus() {
             conn && SP_JSX.jsx("span", { className: `sgl-top-status-item sgl-top-status-${connection}`, title: conn.label, children: SP_JSX.jsx(conn.icon, {}) }),
             battery && SP_JSX.jsxs("span", { className: `sgl-top-status-item${battery.low ? ' sgl-top-status-low' : ''}`, title: `${battery.percent}%${battery.charging ? ', charging' : ''}`, children: [SP_JSX.jsx(BatteryIcon, { battery: battery }), `${battery.percent}%`] }),
             SP_JSX.jsx("span", { className: "sgl-top-status-item sgl-top-status-clock", children: clock }),
-            SP_JSX.jsx("button", { type: "button", className: "sgl-top-avatar-btn", title: "Profile", onClick: openProfile, style: { '--sgl-avatar-radius': `${topAvatarRadius ?? 8}px` }, children: avatar
-                    ? SP_JSX.jsx("span", { className: "sgl-top-avatar-img", style: { backgroundImage: `url(${avatar.url})`, borderColor: avatar.ring } })
-                    : SP_JSX.jsx("span", { className: "sgl-top-avatar-img sgl-top-avatar-empty", style: { borderColor: dot === 'online' ? '#4cff8f' : dot === 'away' ? '#4cb4ff' : 'rgba(196, 201, 209, 0.85)' } }) }),
+            SP_JSX.jsx("button", { type: "button", className: "sgl-top-avatar-btn", title: "Profile", onClick: openProfile, style: { '--sgl-avatar-radius': `${topAvatarRadius ?? 8}px` }, children: SP_JSX.jsx("span", { className: "sgl-top-avatar-frame", style: { background: avatar ? avatar.ring : (dot === 'online' ? '#4cff8f' : dot === 'away' ? '#4cb4ff' : 'rgba(196, 201, 209, 0.85)') }, children: avatar
+                        ? SP_JSX.jsx("img", { className: "sgl-top-avatar-photo", src: avatar.url, alt: "", draggable: false })
+                        : SP_JSX.jsx("span", { className: "sgl-top-avatar-photo sgl-top-avatar-empty" }) }) }),
         ] });
 }
 function LibraryStatusBar({ hidden = false }) {
