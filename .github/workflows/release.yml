@@ -5,14 +5,34 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+# Only one release run at a time; later uploads queue behind it.
+concurrency:
+  group: release
+  cancel-in-progress: false
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # Files uploaded through the website often arrive in several commits a few
+      # minutes apart. Wait, then build from the newest main, so a release always
+      # contains every file from that batch of uploads.
+      - name: Wait for any remaining uploads
+        if: github.event_name == 'push'
+        run: sleep 180
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - name: Read version
         id: v
         run: echo "version=$(python3 -c "import json;print(json.load(open('package.json'))['version'])")" >> "$GITHUB_OUTPUT"
+      - name: Check package.json and plugin.json match
+        run: |
+          p=$(python3 -c "import json;print(json.load(open('package.json'))['version'])")
+          q=$(python3 -c "import json;print(json.load(open('plugin.json'))['version'])")
+          if [ "$p" != "$q" ]; then
+            echo "::error::package.json ($p) and plugin.json ($q) have different versions. Set both to the same number."
+            exit 1
+          fi
       - name: Build zip
         run: |
           mkdir -p out/glance-library
@@ -30,4 +50,4 @@ jobs:
           gh release create "$tag" glance-library.zip \
             --title "Glance Library v${{ steps.v.outputs.version }}" \
             --notes "Glance Library Square build." \
-            --target "$GITHUB_SHA"
+            --target "$(git rev-parse HEAD)"
