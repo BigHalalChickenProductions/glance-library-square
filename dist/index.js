@@ -1169,6 +1169,337 @@ function extractTabsFromNativeTree(element) {
 
 const SETTINGS_KEY = 'settings';
 const LOCAL_STORAGE_KEY = 'glance_library_settings';
+// ---------------------------------------------------------------------------
+// Built-in tab manager (TabMaster-style)
+// Lets the user add, remove, rename, hide and reorder library tabs without
+// the TabMaster plugin. Tabs are stored in Glance Library's own settings and
+// converted to the TabMaster tab format, so the existing tab engine
+// (applyTabMasterCategories) renders them exactly like synced TabMaster tabs.
+// ---------------------------------------------------------------------------
+const GLANCE_TAB_EDITOR_ROUTE = '/glance-library/tabs';
+const GLANCE_BUILTIN_TABS = [
+    { key: 'installed', engineId: 'installed', label: 'Installed' },
+    { key: 'great-on-deck', engineId: 'greatondeck', label: 'Great on Deck' },
+    { key: 'steamos-compatible', engineId: 'steamoscompatible', label: 'SteamOS Compatible' },
+    { key: 'all', engineId: 'allgames', label: 'All Steam Games' },
+    { key: 'favorites', engineId: 'favorites', label: 'Favorites' },
+    { key: 'collections', engineId: 'collections', label: 'Collections (all collections)' },
+    { key: 'non-steam', engineId: 'nonsteam', label: 'Non-Steam' },
+    { key: 'soundtracks', engineId: 'soundtracks', label: 'Soundtracks' },
+];
+const glanceBuiltinDef = (key) => GLANCE_BUILTIN_TABS.find((d) => d.key === key);
+const glanceTabUid = () => `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+function glanceDefaultTabs() {
+    const make = (builtin, hideWhenEmpty) => ({ uid: glanceTabUid(), kind: 'builtin', builtin, hidden: false, installedOnly: false, hideWhenEmpty });
+    return [
+        make('installed', false),
+        make('great-on-deck', true),
+        make('all', false),
+        make('favorites', true),
+        make('collections', true),
+        make('non-steam', true),
+        make('soundtracks', true),
+    ];
+}
+function parseGlanceTabs(raw) {
+    if (!Array.isArray(raw))
+        return [];
+    const out = [];
+    for (const t of raw) {
+        if (!t || typeof t !== 'object' || typeof t.uid !== 'string')
+            continue;
+        if (t.kind === 'builtin' && !glanceBuiltinDef(t.builtin))
+            continue;
+        if (t.kind === 'collection' && typeof t.collectionId !== 'string')
+            continue;
+        if (t.kind === 'raw' && (!t.raw || typeof t.raw !== 'object' || typeof t.raw.id !== 'string'))
+            continue;
+        if (t.kind !== 'builtin' && t.kind !== 'collection' && t.kind !== 'raw')
+            continue;
+        out.push({
+            uid: t.uid,
+            kind: t.kind,
+            builtin: t.builtin,
+            collectionId: t.collectionId,
+            collectionName: typeof t.collectionName === 'string' ? t.collectionName : undefined,
+            raw: t.raw,
+            title: typeof t.title === 'string' && t.title.trim() ? t.title.trim() : undefined,
+            hidden: t.hidden === true,
+            installedOnly: t.installedOnly === true,
+            hideWhenEmpty: t.hideWhenEmpty === true,
+        });
+    }
+    return out;
+}
+/** Converts the user's tab list into TabMaster-format data for the tab engine. */
+function glanceTabsToEngine(list) {
+    const tabs = [];
+    let position = 0;
+    for (const t of list ?? []) {
+        if (!t || t.hidden)
+            continue;
+        const extraFilters = t.installedOnly ? [{ type: 'installed', params: { installed: true } }] : [];
+        if (t.kind === 'builtin') {
+            const def = glanceBuiltinDef(t.builtin);
+            if (!def)
+                continue;
+            tabs.push({
+                id: def.engineId,
+                title: t.title,
+                position: position++,
+                autoHide: t.hideWhenEmpty === true,
+                filters: def.key === 'collections' ? [] : extraFilters,
+                filtersMode: 'and',
+            });
+        }
+        else if (t.kind === 'collection') {
+            const safe = String(t.collectionId).replace(/[^a-z0-9_-]/gi, '') || 'collection';
+            tabs.push({
+                id: `glance-col-${safe}`,
+                title: t.title || t.collectionName || 'Collection',
+                position: position++,
+                autoHide: t.hideWhenEmpty === true,
+                filters: [{ type: 'collection', params: { id: t.collectionId } }, ...extraFilters],
+                filtersMode: 'and',
+            });
+        }
+        else if (t.kind === 'raw' && t.raw) {
+            tabs.push({
+                ...t.raw,
+                title: t.title || t.raw.title,
+                position: position++,
+                autoHide: t.hideWhenEmpty === true || t.raw.autoHide === true,
+            });
+        }
+    }
+    return { found: tabs.length > 0, tabs };
+}
+/** Turns TabMaster's tabs into editable Glance tabs (simple ones become built-ins). */
+function glanceTabsFromTabMaster(tmTabs) {
+    const out = [];
+    const sorted = [...(tmTabs ?? [])].filter((t) => t && typeof t.id === 'string')
+        .sort((a, b) => {
+        // Visible tabs in TabMaster's order first, hidden ones (position < 0) last.
+        const ah = typeof a.position === 'number' && a.position < 0 ? 1 : 0;
+        const bh = typeof b.position === 'number' && b.position < 0 ? 1 : 0;
+        return ah - bh || (a.position ?? 0) - (b.position ?? 0);
+    });
+    for (const tab of sorted) {
+        const hidden = typeof tab.position === 'number' && tab.position < 0;
+        const mapped = normalizeTabMasterId(tab.id);
+        const def = GLANCE_BUILTIN_TABS.find((d) => d.key === mapped);
+        const simple = def && (!Array.isArray(tab.filters) || tab.filters.length === 0) &&
+            (!Array.isArray(tab.appIds) || tab.appIds.length === 0);
+        const customTitle = typeof tab.customTitle === 'string' && tab.customTitle.trim() ? tab.customTitle.trim() : undefined;
+        if (simple) {
+            out.push({ uid: glanceTabUid(), kind: 'builtin', builtin: def.key, title: customTitle, hidden, installedOnly: false, hideWhenEmpty: tab.autoHide === true });
+        }
+        else {
+            const { position, ...raw } = tab;
+            out.push({ uid: glanceTabUid(), kind: 'raw', raw, title: undefined, hidden, installedOnly: false, hideWhenEmpty: tab.autoHide === true });
+        }
+    }
+    return out;
+}
+function glanceTabName(t) {
+    if (t.title)
+        return t.title;
+    if (t.kind === 'builtin')
+        return glanceBuiltinDef(t.builtin)?.label.replace(/ \(.*\)$/, '') ?? t.builtin;
+    if (t.kind === 'collection')
+        return t.collectionName || 'Collection';
+    if (t.kind === 'raw' && t.raw) {
+        try {
+            return resolveTabTitle(t.raw.title, t.raw.id, normalizeTabMasterId(String(t.raw.id)));
+        }
+        catch {
+            return String(t.raw.title || t.raw.id);
+        }
+    }
+    return 'Tab';
+}
+function glanceTabKindLabel(t) {
+    if (t.kind === 'builtin')
+        return t.builtin === 'collections' ? 'All collections' : 'Built-in';
+    if (t.kind === 'collection')
+        return 'Steam collection';
+    return 'Imported from TabMaster';
+}
+function readGlanceCollections() {
+    try {
+        return (readRawApps().userCollections ?? [])
+            .map((c) => ({ id: String(c.id), name: String(c.name), count: Array.isArray(c.apps) ? c.apps.length : 0 }))
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
+    }
+    catch (error) {
+        console.warn(`${LOG_PREFIX} could not read collections`, error);
+        return [];
+    }
+}
+const gteH = SP_REACT.createElement;
+const gteSmallButton = { minWidth: 0, width: 'auto', padding: '0 14px', height: '36px', lineHeight: '36px', flexShrink: 0 };
+const gteSectionTitle = (text) => gteH('div', { style: { fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, margin: '14px 0 6px' } }, text);
+function GlanceAddTabModal({ closeModal, existing, onAdd }) {
+    const collections = SP_REACT.useMemo(() => readGlanceCollections(), []);
+    const usedCollections = new Set(existing.filter((t) => t.kind === 'collection').map((t) => t.collectionId));
+    const add = (tab) => {
+        onAdd({ uid: glanceTabUid(), hidden: false, installedOnly: false, hideWhenEmpty: false, ...tab });
+        closeModal?.();
+    };
+    return gteH(DFL.ModalRoot, { closeModal, onCancel: closeModal },
+        gteH('div', { style: { fontSize: '22px', fontWeight: 600, marginBottom: '4px' } }, 'Add a tab'),
+        gteH('div', { style: { maxHeight: '62vh', overflowY: 'auto', paddingRight: '6px' } },
+            gteH(DFL.Focusable, { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+                gteSectionTitle('Your Steam collections'),
+                collections.length === 0
+                    ? gteH('div', { style: { opacity: 0.7, fontSize: '14px' } }, 'No Steam collections found. Create collections in Steam (Library > Collections) and they will show up here.')
+                    : collections.map((c) => gteH(DFL.DialogButton, {
+                        key: `c-${c.id}`,
+                        onClick: () => add({ kind: 'collection', collectionId: c.id, collectionName: c.name }),
+                    }, `${c.name}  (${c.count})${usedCollections.has(c.id) ? '  - already a tab' : ''}`)),
+                gteSectionTitle('Built-in tabs'),
+                GLANCE_BUILTIN_TABS.map((d) => gteH(DFL.DialogButton, {
+                    key: `b-${d.key}`,
+                    onClick: () => add({ kind: 'builtin', builtin: d.key }),
+                }, d.label)))));
+}
+function GlanceEditTabModal({ closeModal, tab, onSave, onDelete }) {
+    const [title, setTitle] = SP_REACT.useState(tab.title ?? '');
+    const [installedOnly, setInstalledOnly] = SP_REACT.useState(tab.installedOnly === true);
+    const [hideWhenEmpty, setHideWhenEmpty] = SP_REACT.useState(tab.hideWhenEmpty === true);
+    const allowInstalledOnly = tab.kind === 'collection' || (tab.kind === 'builtin' && tab.builtin !== 'collections');
+    return gteH(DFL.ModalRoot, { closeModal, onCancel: closeModal },
+        gteH('div', { style: { fontSize: '22px', fontWeight: 600, marginBottom: '2px' } }, `Edit "${glanceTabName(tab)}"`),
+        gteH('div', { style: { opacity: 0.65, fontSize: '14px', marginBottom: '10px' } }, glanceTabKindLabel(tab)),
+        gteH(DFL.Focusable, { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+            gteH(DFL.TextField, {
+                label: 'Tab name',
+                description: 'Leave empty to use the default name.',
+                value: title,
+                onChange: (e) => setTitle(e?.target?.value ?? ''),
+            }),
+            allowInstalledOnly && gteH(DFL.ToggleField, {
+                label: 'Installed games only',
+                description: 'Only show games that are installed on this device.',
+                checked: installedOnly,
+                onChange: (v) => setInstalledOnly(v),
+            }),
+            gteH(DFL.ToggleField, {
+                label: 'Hide when empty',
+                description: 'Hide this tab when it has no games to show.',
+                checked: hideWhenEmpty,
+                onChange: (v) => setHideWhenEmpty(v),
+            }),
+            gteH(DFL.Focusable, { style: { display: 'flex', gap: '8px', marginTop: '12px' }, 'flow-children': 'horizontal' },
+                gteH(DFL.DialogButton, {
+                    style: { flex: 1 },
+                    onClick: () => {
+                        onSave({ ...tab, title: title.trim() || undefined, installedOnly: allowInstalledOnly && installedOnly, hideWhenEmpty });
+                        closeModal?.();
+                    },
+                }, 'Save'),
+                gteH(DFL.DialogButton, { style: { flex: 1 }, onClick: () => closeModal?.() }, 'Cancel'),
+                gteH(DFL.DialogButton, {
+                    style: { flex: 1 },
+                    onClick: () => {
+                        onDelete(tab);
+                        closeModal?.();
+                    },
+                }, 'Delete tab'))));
+}
+function glanceConfirm(title, body, okText, onOK) {
+    DFL.showModal(gteH(DFL.ConfirmModal, {
+        strTitle: title,
+        strDescription: body,
+        strOKButtonText: okText,
+        onOK,
+    }));
+}
+function GlanceTabEditor() {
+    const current = useSettings();
+    const usingDefaults = current.customTabs.length === 0;
+    const list = SP_REACT.useMemo(() => (usingDefaults ? glanceDefaultTabs() : current.customTabs), [current.customTabs, usingDefaults]);
+    const save = (next) => {
+        void settings.setCustomTabs(next);
+    };
+    const move = (index, delta) => {
+        const target = index + delta;
+        if (target < 0 || target >= list.length)
+            return;
+        const next = [...list];
+        [next[index], next[target]] = [next[target], next[index]];
+        save(next);
+    };
+    const replaceTab = (tab) => save(list.map((t) => (t.uid === tab.uid ? tab : t)));
+    const deleteTab = (tab) => save(list.filter((t) => t.uid !== tab.uid));
+    const openAdd = () => DFL.showModal(gteH(GlanceAddTabModal, { existing: list, onAdd: (tab) => save([...list, tab]) }));
+    const openEdit = (tab) => DFL.showModal(gteH(GlanceEditTabModal, { tab, onSave: replaceTab, onDelete: deleteTab }));
+    const importTabMaster = () => {
+        glanceConfirm('Import from TabMaster', 'Replace your tab list with the tabs from TabMaster? TabMaster must have been set up on this Deck.', 'Import', async () => {
+            try {
+                const data = await fetchTabMasterSettings(true);
+                const imported = glanceTabsFromTabMaster(data?.tabs);
+                if (!data?.found || imported.length === 0) {
+                    toaster.toast({ title: PLUGIN_NAME, body: 'No TabMaster tabs were found on this Deck.' });
+                    return;
+                }
+                save(imported);
+                toaster.toast({ title: PLUGIN_NAME, body: `Imported ${imported.length} tabs from TabMaster.` });
+            }
+            catch (error) {
+                console.warn(`${LOG_PREFIX} TabMaster import failed`, error);
+                toaster.toast({ title: PLUGIN_NAME, body: 'Could not read TabMaster tabs.' });
+            }
+        });
+    };
+    const resetDefaults = () => {
+        glanceConfirm('Reset tabs', 'Replace your tab list with the default tabs?', 'Reset', () => save(glanceDefaultTabs()));
+    };
+    const rowStyle = (t) => ({
+        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', marginBottom: '6px',
+        borderRadius: '6px', background: 'rgba(255,255,255,0.06)', opacity: t.hidden ? 0.5 : 1,
+    });
+    return gteH(DFL.Focusable, {
+        style: { padding: '56px 40px 80px', height: '100%', boxSizing: 'border-box', overflowY: 'auto', color: '#fff' },
+        onCancelButton: () => DFL.Navigation.NavigateBack(),
+    },
+        gteH('div', { style: { fontSize: '28px', fontWeight: 700, marginBottom: '4px' } }, 'Library tabs'),
+        gteH('div', { style: { opacity: 0.7, fontSize: '14px', marginBottom: '10px' } }, 'Choose which tabs the Spotlight Library shows and in what order. Changes apply right away.'),
+        gteH(DFL.ToggleField, {
+            label: 'Use these tabs in the library',
+            description: current.customTabsEnabled
+                ? 'On: the library shows the tabs below.'
+                : (current.tabMasterSync ? 'Off: the library uses TabMaster tabs when TabMaster is installed, otherwise the default tabs.' : 'Off: the library shows its default tabs.'),
+            checked: current.customTabsEnabled,
+            onChange: (v) => {
+                if (v && usingDefaults) {
+                    void settings.setCustomTabs(list);
+                }
+                else {
+                    void settings.setCustomTabsEnabled(v);
+                }
+            },
+        }),
+        gteH(DFL.Focusable, { style: { display: 'flex', gap: '8px', margin: '12px 0 16px' }, 'flow-children': 'horizontal' },
+            gteH(DFL.DialogButton, { style: { ...gteSmallButton, padding: '0 20px' }, onClick: openAdd }, '+ Add tab'),
+            gteH(DFL.DialogButton, { style: { ...gteSmallButton, padding: '0 20px' }, onClick: importTabMaster }, 'Import from TabMaster'),
+            gteH(DFL.DialogButton, { style: { ...gteSmallButton, padding: '0 20px' }, onClick: resetDefaults }, 'Reset to default')),
+        list.length === 0 && gteH('div', { style: { opacity: 0.7 } }, 'No tabs yet. Press "+ Add tab" to add one.'),
+        list.map((t, index) => gteH(DFL.Focusable, { key: t.uid, style: rowStyle(t), 'flow-children': 'horizontal' },
+            gteH('div', { style: { flex: 1, minWidth: 0 } },
+                gteH('div', { style: { fontSize: '17px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, `${index + 1}. ${glanceTabName(t)}`),
+                gteH('div', { style: { fontSize: '12px', opacity: 0.65 } }, [
+                    glanceTabKindLabel(t),
+                    t.hidden ? 'Hidden' : null,
+                    t.installedOnly ? 'Installed only' : null,
+                    t.hideWhenEmpty ? 'Hides when empty' : null,
+                ].filter(Boolean).join('  ·  '))),
+            gteH(DFL.DialogButton, { style: gteSmallButton, disabled: index === 0, onClick: () => move(index, -1) }, '▲'),
+            gteH(DFL.DialogButton, { style: gteSmallButton, disabled: index === list.length - 1, onClick: () => move(index, 1) }, '▼'),
+            gteH(DFL.DialogButton, { style: gteSmallButton, onClick: () => replaceTab({ ...t, hidden: !t.hidden }) }, t.hidden ? 'Show' : 'Hide'),
+            gteH(DFL.DialogButton, { style: gteSmallButton, onClick: () => openEdit(t) }, 'Edit'))));
+}
+
 const DEFAULTS = {
     enabled: true,
     spotlightLibrary: true,
@@ -1186,6 +1517,8 @@ const DEFAULTS = {
     collectionArtFit: 'cover',
     collectionCustomArt: {},
     librarySort: 'recent',
+    customTabsEnabled: false,
+    customTabs: [],
 };
 function parseSettings(raw) {
     const pick = (key) => typeof raw?.[key] === 'boolean' ? raw[key] : DEFAULTS[key];
@@ -1218,6 +1551,8 @@ function parseSettings(raw) {
         librarySort: raw?.librarySort === 'alpha' || raw?.librarySort === 'playtime' || raw?.librarySort === 'size' || raw?.librarySort === 'recent'
             ? raw.librarySort
             : DEFAULTS.librarySort,
+        customTabsEnabled: pick('customTabsEnabled'),
+        customTabs: parseGlanceTabs(raw?.customTabs),
     };
 }
 const memoryStorage = new Map();
@@ -1374,6 +1709,13 @@ function createSettingsStore(kv, storage = defaultStorage) {
             }
             catch { }
             await persist({ ...current, tabMasterSync });
+        },
+        async setCustomTabsEnabled(customTabsEnabled) {
+            await persist({ ...current, customTabsEnabled: customTabsEnabled === true });
+        },
+        /** Saves the tab list. Editing tabs also switches the library to use them. */
+        async setCustomTabs(customTabs) {
+            await persist({ ...current, customTabs: parseGlanceTabs(customTabs), customTabsEnabled: true });
         },
         async setPulsingBackground(pulsingBackground) {
             await persist({ ...current, pulsingBackground });
@@ -2149,7 +2491,7 @@ function UpdatesSection() {
                     }, children: ["Update to ", state.release.version] }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: state.status === 'checking', onClick: recheck, children: "Check for updates" }) })] }));
 }
 function SettingsPanel() {
-    const { enabled, spotlightLibrary, libraryGridColumns, libraryCollectionColumns, dimUninstalledGames, tabMasterSync, libraryStatusBar, statusAvatar, collectionConsoleIcons, collectionArtMode, collectionArtFit, librarySort, } = useSettings();
+    const { enabled, spotlightLibrary, libraryGridColumns, libraryCollectionColumns, dimUninstalledGames, tabMasterSync, customTabsEnabled, libraryStatusBar, statusAvatar, collectionConsoleIcons, collectionArtMode, collectionArtFit, librarySort, } = useSettings();
     const isLibraryActive = enabled && spotlightLibrary;
     return (SP_JSX.jsxs("div", { children: [SP_JSX.jsx(DFL.PanelSection, { title: PLUGIN_NAME, children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Spotlight Library", description: "Replaces Steam's Library with the Spotlight Library 2-panel view. Turn off to return to Steam's native Library.", checked: isLibraryActive, onChange: (value) => {
                             void settings.setEnabled(value);
@@ -2178,7 +2520,20 @@ function SettingsPanel() {
                                     { data: 'alpha', label: 'Alphabetical (A–Z)' },
                                     { data: 'playtime', label: 'Hours Played' },
                                     { data: 'size', label: 'Size on Disk' },
-                                ], selectedOption: librarySort, onChange: (val) => settings.setLibrarySort(val.data) }) }) }), SP_JSX.jsx(DFL.PanelSection, { title: "TabMaster Integration", children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Sync with TabMaster", description: "Inherits custom tabs, tab ordering, and rule filters from the TabMaster plugin when installed.", checked: tabMasterSync, onChange: (value) => settings.setTabMasterSync(value) }) }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Collections Display & Artwork", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Console icons", description: "Automatically detects and displays console badges (PS1/2/3/4, GameCube, Switch, N64, GBA, Xbox, Genesis, etc.) on collection cards.", checked: collectionConsoleIcons, onChange: (value) => settings.setCollectionConsoleIcons(value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.DropdownItem, { label: "Default collection display", description: "Choose between the dynamic 5-game fan, custom image, or console icon.", rgOptions: [
+                                ], selectedOption: librarySort, onChange: (val) => settings.setLibrarySort(val.data) }) }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Library Tabs", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", description: "Add, remove, rename, hide and reorder library tabs, including tabs for your Steam collections.", onClick: () => {
+                                        try {
+                                            DFL.Navigation.CloseSideMenus?.();
+                                        }
+                                        catch { }
+                                        DFL.Navigation.Navigate(GLANCE_TAB_EDITOR_ROUTE);
+                                    }, children: "Edit library tabs" }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Use my tabs", description: "Show the tabs set up in the tab editor.", checked: customTabsEnabled, onChange: (value) => {
+                                        if (value && settings.get().customTabs.length === 0) {
+                                            void settings.setCustomTabs(glanceDefaultTabs());
+                                        }
+                                        else {
+                                            void settings.setCustomTabsEnabled(value);
+                                        }
+                                    } }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Sync with TabMaster", description: customTabsEnabled ? "Not used while \"Use my tabs\" is on." : "Inherits custom tabs, tab ordering, and rule filters from the TabMaster plugin when installed.", checked: tabMasterSync, onChange: (value) => settings.setTabMasterSync(value) }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Collections Display & Artwork", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "Console icons", description: "Automatically detects and displays console badges (PS1/2/3/4, GameCube, Switch, N64, GBA, Xbox, Genesis, etc.) on collection cards.", checked: collectionConsoleIcons, onChange: (value) => settings.setCollectionConsoleIcons(value) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.DropdownItem, { label: "Default collection display", description: "Choose between the dynamic 5-game fan, custom image, or console icon.", rgOptions: [
                                         { data: 'fan', label: '5-Game Fan (Default)' },
                                         { data: 'custom', label: 'Custom Image' },
                                         { data: 'icon', label: 'Console Icon' },
@@ -11026,7 +11381,10 @@ function SpotlightLibrary({ mockGames, compact, fallbackTree }) {
             active = false;
         };
     }, [currentSettings.tabMasterSync, fallbackTree]);
-    const effectiveTabMasterData = currentSettings.tabMasterSync ? tabMasterData : null;
+    const customTabData = SP_REACT.useMemo(() => (currentSettings.customTabsEnabled ? glanceTabsToEngine(currentSettings.customTabs) : null), [currentSettings.customTabsEnabled, currentSettings.customTabs]);
+    const effectiveTabMasterData = customTabData?.found
+        ? customTabData
+        : (currentSettings.tabMasterSync ? tabMasterData : null);
     const categories = SP_REACT.useMemo(() => buildCategories(mockGames, effectiveTabMasterData), [mockGames, effectiveTabMasterData]);
     // Memory restore on mount
     const restoreRef = SP_REACT.useRef(takeLibraryRestore());
@@ -12019,6 +12377,12 @@ var index = definePlugin(() => {
     void getSteamLanguage(); // resolve early so library renders in the right locale immediately
     const unpatchLibrary = patchLibraryPage();
     const stopUpdateChecks = startUpdateChecks();
+    try {
+        routerHook.addRoute(GLANCE_TAB_EDITOR_ROUTE, () => SP_REACT.createElement(GlanceTabEditor, null), { exact: true });
+    }
+    catch (error) {
+        console.error(`${LOG_PREFIX} could not add tab editor route`, error);
+    }
     console.log(`${LOG_PREFIX} loaded`);
     return {
         name: PLUGIN_NAME,
@@ -12037,6 +12401,12 @@ var index = definePlugin(() => {
             }
             catch (error) {
                 console.error(`${LOG_PREFIX} Update check cleanup failed`, error);
+            }
+            try {
+                routerHook.removeRoute(GLANCE_TAB_EDITOR_ROUTE);
+            }
+            catch (error) {
+                console.error(`${LOG_PREFIX} could not remove tab editor route`, error);
             }
             console.log(`${LOG_PREFIX} unloaded`);
         },
